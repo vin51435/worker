@@ -1,0 +1,40 @@
+{
+  "name": "worker",
+  "version": "1.0.0",
+  "description": "worker for my various process",
+  "keywords": [
+    "worker"
+  ],
+  "homepage": "https://github.com/vin51435/worker#readme",
+  "bugs": {
+    "url": "https://github.com/vin51435/worker/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vin51435/worker.git"
+  },
+  "license": "ISC",
+  "author": "vin",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "dependencies": {
+    "@vin51435/studenhub-contracts": "^1.0.0",
+    "bullmq": "^5.67.3",
+    "ioredis": "^5.9.2",
+    "mongoose": "^9.2.0",
+    "rabbitmq-client": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.8",
+    "@types/node": "^25.2.3",
+    "tsc-alias": "^1.8.16",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "imports": {
+    "#src/*": "./src/*"
+  }
+}
