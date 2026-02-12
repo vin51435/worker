@@ -1,28 +1,33 @@
-import { rabbit } from '../config/rabbitmq.js';
+import createConnection from "#src/config/rabbitmq.js";
 
 let publisher: any;
 
-export async function publishEvent(
-  routingKey: string,
-  payload: unknown
-) {
+async function initPublisher() {
+  const connection = await createConnection();
+
+  publisher = connection.createPublisher({
+    confirm: true,
+    exchanges: [
+      {
+        exchange: "events",
+        type: "topic",
+      },
+    ],
+  });
+}
+
+async function publishEvent(routingKey: string, payload: unknown) {
   if (!publisher) {
-    publisher = rabbit.createPublisher({
-      confirm: true,
-      exchanges: [
-        {
-          exchange: 'events',
-          type: 'topic',
-        },
-      ],
-    });
+    await initPublisher();
   }
 
   await publisher.send(
     {
-      exchange: 'events',
+      exchange: "events",
       routingKey,
     },
-    payload
+    payload,
   );
 }
+
+export { publishEvent };

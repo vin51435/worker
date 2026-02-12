@@ -1,4 +1,4 @@
-const { loadEnvFile } = require('node:process');
+import { loadEnvFile } from 'node:process';
 loadEnvFile('#src/../.env');
 
 export const env = {
