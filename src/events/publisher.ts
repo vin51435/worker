@@ -1,9 +1,9 @@
-import createConnection from "#src/config/rabbitmq.js";
+import rabbitConnection from "#src/config/rabbitmq.js";
 
 let publisher: any;
 
 async function initPublisher() {
-  const connection = await createConnection();
+  const connection = await rabbitConnection();
 
   publisher = connection.createPublisher({
     confirm: true,

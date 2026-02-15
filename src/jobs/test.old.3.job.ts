@@ -1,8 +1,10 @@
+//  workaround, The queues aren't being created by the publisher configuration. Let me try a more direct approach - we'll create a dummy consumer for each retry queue, let it set up the infrastructure, then close it:
+
 import { redis } from "../config/redis.js";
 import { evaluateAnswerJob } from "../jobs/evaluateAnswer.job.js";
 import { testJob } from "#src/jobs/test.job.js";
 import rabbitConnection from "#src/config/rabbitmq.js";
-import { ConsumerStatus, Publisher } from "rabbitmq-client";
+import { ConsumerStatus } from "rabbitmq-client";
 
 const handlers: Record<string, (data: any) => Promise<void>> = {
   "interview.test": testJob,
@@ -17,64 +19,92 @@ interface MessageWrapper {
   data: any;
 }
 
+async function setupInfrastructure(connection: any) {
+  // Create exchanges first
+  const exchangeSetup = connection.createConsumer(
+    {
+      queue: "temp-exchange-setup",
+      queueOptions: { durable: false, autoDelete: true },
+      exchanges: [
+        { exchange: "interview.event", type: "topic", durable: true },
+        { exchange: "interview.retry.exchange", type: "direct", durable: true },
+        { exchange: "interview.dlx", type: "direct", durable: true },
+      ],
+    },
+    async () => ConsumerStatus.ACK
+  );
+
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  // Create retry queue for test
+  const retryTestSetup = connection.createConsumer(
+    {
+      queue: "interview-worker.retry.test",
+      queueOptions: {
+        durable: true,
+        arguments: {
+          "x-message-ttl": RETRY_DELAY_MS,
+          "x-dead-letter-exchange": "interview.event",
+          "x-dead-letter-routing-key": "interview.test",
+        },
+      },
+      exchanges: [
+        { exchange: "interview.retry.exchange", type: "direct", durable: true },
+      ],
+      queueBindings: [
+        {
+          queue: "interview-worker.retry.test",
+          exchange: "interview.retry.exchange",
+          routingKey: "retry.test",
+        },
+      ],
+    },
+    async () => ConsumerStatus.ACK
+  );
+
+  // Create retry queue for evaluate
+  const retryEvaluateSetup = connection.createConsumer(
+    {
+      queue: "interview-worker.retry.evaluate",
+      queueOptions: {
+        durable: true,
+        arguments: {
+          "x-message-ttl": RETRY_DELAY_MS,
+          "x-dead-letter-exchange": "interview.event",
+          "x-dead-letter-routing-key": "interview.evaluate",
+        },
+      },
+      exchanges: [
+        { exchange: "interview.retry.exchange", type: "direct", durable: true },
+      ],
+      queueBindings: [
+        {
+          queue: "interview-worker.retry.evaluate",
+          exchange: "interview.retry.exchange",
+          routingKey: "retry.evaluate",
+        },
+      ],
+    },
+    async () => ConsumerStatus.ACK
+  );
+
+  await new Promise(resolve => setTimeout(resolve, 1000));
+
+  // Close all setup consumers
+  await exchangeSetup.close();
+  await retryTestSetup.close();
+  await retryEvaluateSetup.close();
+
+  console.log("✅ Retry infrastructure created");
+}
+
 async function startWorker() {
   const connection = await rabbitConnection();
 
-  // Declare exchanges first
-  await connection.exchangeDeclare({
-    exchange: "interview.event",
-    type: "topic",
-    durable: true,
-  });
+  // Setup all infrastructure first
+  await setupInfrastructure(connection);
 
-  await connection.exchangeDeclare({
-    exchange: "interview.retry.exchange",
-    type: "direct",
-    durable: true,
-  });
-
-  await connection.exchangeDeclare({
-    exchange: "interview.dlx",
-    type: "direct",
-    durable: true,
-  });
-
-  // Declare retry queues
-  await connection.queueDeclare({
-    queue: "interview-worker.retry.test",
-    durable: true,
-    arguments: {
-      "x-message-ttl": RETRY_DELAY_MS,
-      "x-dead-letter-exchange": "interview.event",
-      "x-dead-letter-routing-key": "interview.test",
-    },
-  });
-
-  await connection.queueDeclare({
-    queue: "interview-worker.retry.evaluate",
-    durable: true,
-    arguments: {
-      "x-message-ttl": RETRY_DELAY_MS,
-      "x-dead-letter-exchange": "interview.event",
-      "x-dead-letter-routing-key": "interview.evaluate",
-    },
-  });
-
-  // Bind retry queues to retry exchange
-  await connection.queueBind({
-    queue: "interview-worker.retry.test",
-    exchange: "interview.retry.exchange",
-    routingKey: "retry.test",
-  });
-
-  await connection.queueBind({
-    queue: "interview-worker.retry.evaluate",
-    exchange: "interview.retry.exchange",
-    routingKey: "retry.evaluate",
-  });
-
-  console.log("✅ Retry infrastructure created");
-
+  // Create the actual publisher for sending messages
   const publisher = connection.createPublisher({
     confirm: true,
   });
@@ -97,15 +127,11 @@ async function startWorker() {
     async (msg) => {
       try {
         const messageBody = JSON.parse(msg.body.toString());
-
+        
         let retryCount: number;
         let data: any;
 
-        if (
-          typeof messageBody === "object" &&
-          "retryCount" in messageBody &&
-          "data" in messageBody
-        ) {
+        if (typeof messageBody === 'object' && 'retryCount' in messageBody && 'data' in messageBody) {
           retryCount = messageBody.retryCount;
           data = messageBody.data;
         } else {
@@ -119,15 +145,10 @@ async function startWorker() {
 
         try {
           await processJob(msg.routingKey, data);
-          console.log(
-            `[${new Date().toISOString()}] Job completed successfully`
-          );
+          console.log(`[${new Date().toISOString()}] Job completed successfully`);
           return ConsumerStatus.ACK;
         } catch (err: any) {
-          console.error(
-            `[${new Date().toISOString()}] Job failed:`,
-            err?.message || err
-          );
+          console.error(`[${new Date().toISOString()}] Job failed:`, err.message);
 
           if (retryCount < MAX_RETRIES) {
             await retryMessage(publisher, msg.routingKey, data, retryCount + 1);
@@ -165,13 +186,13 @@ async function startWorker() {
 }
 
 async function retryMessage(
-  publisher: Publisher,
+  publisher: any,
   routingKey: string,
   data: any,
   retryCount: number
 ) {
   const retryRoutingKey = routingKey.replace("interview.", "retry.");
-
+  
   console.log(
     `[${new Date().toISOString()}] Retrying message (attempt ${retryCount}/${MAX_RETRIES}) - will retry in ${RETRY_DELAY_MS}ms`
   );
@@ -189,7 +210,7 @@ async function retryMessage(
       },
       Buffer.from(JSON.stringify(messageWrapper))
     );
-
+    
     console.log(
       `[${new Date().toISOString()}] Message sent to retry queue: ${retryRoutingKey}`
     );
@@ -199,14 +220,12 @@ async function retryMessage(
 }
 
 async function sendToDLQ(
-  publisher: Publisher,
+  publisher: any,
   routingKey: string,
   data: any,
   retryCount: number
 ) {
-  console.log(
-    `[${new Date().toISOString()}] Max retries exceeded, sending to DLQ`
-  );
+  console.log(`[${new Date().toISOString()}] Max retries exceeded, sending to DLQ`);
 
   try {
     const messageWrapper = {
@@ -224,7 +243,7 @@ async function sendToDLQ(
       },
       Buffer.from(JSON.stringify(messageWrapper))
     );
-
+    
     console.log(`[${new Date().toISOString()}] Message sent to DLQ`);
   } catch (error) {
     console.error("Failed to send message to DLQ:", error);

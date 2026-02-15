@@ -1,7 +1,7 @@
 import { Connection } from 'rabbitmq-client';
 import { env } from './env.js';
 
-async function createConnection() {
+async function rabbitConnection() {
   const rabbit = new Connection({
     url: env.rabbitmqUrl,
   });
@@ -15,4 +15,4 @@ async function createConnection() {
   return rabbit;
 }
 
-export default createConnection 
+export default rabbitConnection 

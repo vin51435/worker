@@ -19,17 +19,18 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build": "tsup src/index.ts --format esm,cjs --dts --clean" },
+    "build": "tsup src/index.ts --format esm,cjs --dts --clean",
+    "start": "tsx --watch src/index.ts"
+  },
   "dependencies": {
     "@vin51435/studenhub-contracts": "^1.0.0",
-    "bullmq": "^5.67.3",
     "ioredis": "^5.9.2",
     "mongoose": "^9.2.0",
     "rabbitmq-client": "^5.0.8"
   },
   "devDependencies": {
-    "tsup": "^8.5.1",
     "@types/node": "^25.2.3",
+    "tsup": "^8.5.1",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
