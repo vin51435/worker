@@ -119,8 +119,6 @@ async function startWorker() {
             await retryMessage(publisher, msg.routingKey, data, retryCount + 1);
           } else {
             await sendToDLQ(publisher, msg.routingKey, data, retryCount);
-
-            // return ConsumerStatus.DROP;
           }
 
           return ConsumerStatus.ACK;
@@ -133,22 +131,22 @@ async function startWorker() {
   );
 
   // Dead Letter Queue consumer
-  connection.createConsumer(
-    {
-      queue: "interview-worker.dlq",
-      queueOptions: { durable: true },
-      exchanges: [{ exchange: "interview.dlx", type: "direct", durable: true }],
-      queueBindings: [{ exchange: "interview.dlx", routingKey: "failed" }],
-    },
-    async (msg) => {
-      console.error(`[${new Date().toISOString()}] DLQ Message:`, {
-        routingKey: msg.routingKey,
-        retryCount: msg.headers?.["x-retry-count"],
-        body: msg.body.toString(),
-      });
-      return ConsumerStatus.ACK;
-    },
-  );
+  // connection.createConsumer(
+  //   {
+  //     queue: "interview-worker.dlq",
+  //     queueOptions: { durable: true },
+  //     exchanges: [{ exchange: "interview.dlx", type: "direct", durable: true }],
+  //     queueBindings: [{ exchange: "interview.dlx", routingKey: "failed" }],
+  //   },
+  //   async (msg) => {
+  //     console.error(`[${new Date().toISOString()}] DLQ Message:`, {
+  //       routingKey: msg.routingKey,
+  //       retryCount: msg.headers?.["x-retry-count"],
+  //       body: msg.body.toString(),
+  //     });
+  //     return ConsumerStatus.ACK;
+  //   },
+  // );
 
   console.log("✅ Interview Worker started");
 }
