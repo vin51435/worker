@@ -73,8 +73,6 @@ async function startWorker() {
     routingKey: "retry.evaluate",
   });
 
-  console.log("✅ Retry infrastructure created");
-
   const publisher = connection.createPublisher({
     confirm: true,
   });
@@ -131,6 +129,7 @@ async function startWorker() {
   );
 
   // Dead Letter Queue consumer
+  // comment to store failed messages in DLQ
   // connection.createConsumer(
   //   {
   //     queue: "interview-worker.dlq",
