@@ -12,15 +12,15 @@ const handlers: Record<string, (data: any) => Promise<void>> = {
 const RETRY_DELAY_MS = 5000;
 const MAX_RETRIES = 2;
 
-interface MessageWrapper {
-  retryCount: number;
-  data: any;
-}
-
 async function startWorker() {
   const connection = await rabbitConnection();
 
-  // Declare exchanges first
+  // Delete queues for testing
+  await connection.queueDelete("interview-worker.retry.evaluate");
+  await connection.queueDelete("interview-worker.queue");
+  await connection.queueDelete("interview-worker.retry.test");
+
+  // Declare exchanges
   await connection.exchangeDeclare({
     exchange: "interview.event",
     type: "topic",
@@ -96,43 +96,31 @@ async function startWorker() {
     },
     async (msg) => {
       try {
-        const messageBody = JSON.parse(msg.body.toString());
-
-        let retryCount: number;
-        let data: any;
-
-        if (
-          typeof messageBody === "object" &&
-          "retryCount" in messageBody &&
-          "data" in messageBody
-        ) {
-          retryCount = messageBody.retryCount;
-          data = messageBody.data;
-        } else {
-          retryCount = 0;
-          data = messageBody;
-        }
-
+        const retryCount = msg.headers?.["x-retry-count"] ?? 0;
         console.log(
-          `[${new Date().toISOString()}] Received message ${msg.routingKey} with retry count: ${retryCount}`
+          `[${new Date().toISOString()}] Received message ${msg.routingKey} with retry count: ${retryCount}`,
         );
+
+        const data = JSON.parse(msg.body.toString());
 
         try {
           await processJob(msg.routingKey, data);
           console.log(
-            `[${new Date().toISOString()}] Job completed successfully`
+            `[${new Date().toISOString()}] Job completed successfully`,
           );
           return ConsumerStatus.ACK;
         } catch (err: any) {
           console.error(
             `[${new Date().toISOString()}] Job failed:`,
-            err?.message || err
+            err?.message || err,
           );
 
           if (retryCount < MAX_RETRIES) {
             await retryMessage(publisher, msg.routingKey, data, retryCount + 1);
           } else {
             await sendToDLQ(publisher, msg.routingKey, data, retryCount);
+
+            // return ConsumerStatus.DROP;
           }
 
           return ConsumerStatus.ACK;
@@ -141,7 +129,7 @@ async function startWorker() {
         console.error("Failed to parse message:", parseError);
         return ConsumerStatus.DROP;
       }
-    }
+    },
   );
 
   // Dead Letter Queue consumer
@@ -155,10 +143,11 @@ async function startWorker() {
     async (msg) => {
       console.error(`[${new Date().toISOString()}] DLQ Message:`, {
         routingKey: msg.routingKey,
+        retryCount: msg.headers?.["x-retry-count"],
         body: msg.body.toString(),
       });
       return ConsumerStatus.ACK;
-    }
+    },
   );
 
   console.log("✅ Interview Worker started");
@@ -168,30 +157,28 @@ async function retryMessage(
   publisher: Publisher,
   routingKey: string,
   data: any,
-  retryCount: number
+  retryCount: number,
 ) {
   const retryRoutingKey = routingKey.replace("interview.", "retry.");
 
   console.log(
-    `[${new Date().toISOString()}] Retrying message (attempt ${retryCount}/${MAX_RETRIES}) - will retry in ${RETRY_DELAY_MS}ms`
+    `[${new Date().toISOString()}] Retrying message (attempt ${retryCount}/${MAX_RETRIES}) - will retry in ${RETRY_DELAY_MS}ms`,
   );
 
   try {
-    const messageWrapper: MessageWrapper = {
-      retryCount,
-      data,
-    };
-
     await publisher.send(
       {
         exchange: "interview.retry.exchange",
         routingKey: retryRoutingKey,
+        headers: {
+          "x-retry-count": retryCount,
+        },
       },
-      Buffer.from(JSON.stringify(messageWrapper))
+      Buffer.from(JSON.stringify(data)),
     );
 
     console.log(
-      `[${new Date().toISOString()}] Message sent to retry queue: ${retryRoutingKey}`
+      `[${new Date().toISOString()}] Message sent to retry queue: ${retryRoutingKey}`,
     );
   } catch (error) {
     console.error("Failed to send message to retry queue:", error);
@@ -202,15 +189,14 @@ async function sendToDLQ(
   publisher: Publisher,
   routingKey: string,
   data: any,
-  retryCount: number
+  retryCount: number,
 ) {
   console.log(
-    `[${new Date().toISOString()}] Max retries exceeded, sending to DLQ`
+    `[${new Date().toISOString()}] Max retries exceeded, sending to DLQ`,
   );
 
   try {
-    const messageWrapper = {
-      retryCount,
+    const dlqMessage = {
       data,
       originalRoutingKey: routingKey,
       failureReason: "max-retries-exceeded",
@@ -221,8 +207,11 @@ async function sendToDLQ(
       {
         exchange: "interview.dlx",
         routingKey: "failed",
+        headers: {
+          "x-retry-count": retryCount,
+        },
       },
-      Buffer.from(JSON.stringify(messageWrapper))
+      Buffer.from(JSON.stringify(dlqMessage)),
     );
 
     console.log(`[${new Date().toISOString()}] Message sent to DLQ`);
